@@ -4,11 +4,14 @@ import type { commandActionSchema, snapshotSchema } from './schemas';
 export type Snapshot = z.infer<typeof snapshotSchema>;
 export type ProcessInfo = Snapshot['processes'][number];
 export type CommandAction = z.infer<typeof commandActionSchema>;
+export type HistoryAction = CommandAction | 'add_project';
+export type Battery = NonNullable<Snapshot['battery']>;
+export type Connection = NonNullable<Snapshot['network']['connection']>;
 export type CommandStatus = 'pending' | 'running' | 'success' | 'error' | 'expired';
 
 export interface CommandRow {
   id: string;
-  action: CommandAction;
+  action: HistoryAction;
   project: string;
   status: CommandStatus;
   output_preview: string | null;

@@ -41,11 +41,16 @@ create index if not exists metrics_created_at_idx on public.metrics (created_at)
 create table if not exists public.commands (
   id uuid primary key default gen_random_uuid(),
   server_id uuid not null references public.servers (id) on delete cascade,
-  action text not null check (action in ('start', 'stop', 'restart', 'update', 'logs')),
+  action text not null
+    check (action in ('start', 'stop', 'restart', 'update', 'logs', 'add_project')),
   project text not null check (char_length(project) between 1 and 200),
   status text not null default 'pending'
     check (status in ('pending', 'running', 'success', 'error', 'expired')),
   output text,
+  -- Параметры add_project без секретов.
+  payload jsonb,
+  -- Шифротекст .env проекта. Стирается, как только агент забрал команду.
+  secret_env text,
   created_at timestamptz not null default now(),
   started_at timestamptz,
   finished_at timestamptz
@@ -91,7 +96,8 @@ as $$
   update public.commands
      set status = 'expired',
          finished_at = now(),
-         output = 'Команда не была получена агентом за 60 секунд.'
+         output = 'Команда не была получена агентом за 60 секунд.',
+         secret_env = null
    where status = 'pending'
      and created_at < now() - interval '60 seconds';
 
@@ -169,7 +175,7 @@ begin
   perform public.expire_stale_commands();
 
   with next_commands as (
-    select c.id
+    select c.id, c.secret_env
       from public.commands c
      where c.server_id = p_server_id
        and c.status = 'pending'
@@ -180,10 +186,11 @@ begin
   claimed as (
     update public.commands c
        set status = 'running',
-           started_at = now()
+           started_at = now(),
+           secret_env = null
       from next_commands n
      where c.id = n.id
-    returning c.id, c.action, c.project, c.created_at
+    returning c.id, c.action, c.project, c.created_at, c.payload, n.secret_env
   )
   select coalesce(
            jsonb_agg(
@@ -191,7 +198,9 @@ begin
                'id', cl.id,
                'action', cl.action,
                'project', cl.project,
-               'ageMs', floor(extract(epoch from now() - cl.created_at) * 1000)::bigint
+               'ageMs', floor(extract(epoch from now() - cl.created_at) * 1000)::bigint,
+               'payload', cl.payload,
+               'secret_env', cl.secret_env
              )
              order by cl.created_at
            ),
@@ -294,6 +303,56 @@ exception
 end;
 $$;
 
+-- Ставит в очередь добавление нового проекта.
+create or replace function public.enqueue_add_project(
+  p_server_id uuid,
+  p_project text,
+  p_payload jsonb,
+  p_secret_env text
+)
+returns jsonb
+language plpgsql
+as $$
+declare
+  v_snapshot jsonb;
+  v_last_seen timestamptz;
+  v_id uuid;
+begin
+  perform public.expire_stale_commands();
+
+  select st.snapshot, s.last_seen
+    into v_snapshot, v_last_seen
+    from public.servers s
+    left join public.server_state st on st.server_id = s.id
+   where s.id = p_server_id;
+
+  if v_snapshot is null then
+    return jsonb_build_object('ok', false, 'error', 'no_data');
+  end if;
+
+  if v_last_seen < now() - interval '30 seconds' then
+    return jsonb_build_object('ok', false, 'error', 'offline');
+  end if;
+
+  if exists (
+    select 1
+      from jsonb_array_elements(v_snapshot -> 'processes') as p(value)
+     where p.value ->> 'name' = p_project
+  ) then
+    return jsonb_build_object('ok', false, 'error', 'project_exists');
+  end if;
+
+  insert into public.commands (server_id, action, project, payload, secret_env)
+  values (p_server_id, 'add_project', p_project, p_payload, p_secret_env)
+  returning id into v_id;
+
+  return jsonb_build_object('ok', true, 'id', v_id);
+exception
+  when unique_violation then
+    return jsonb_build_object('ok', false, 'error', 'duplicate');
+end;
+$$;
+
 -- Список серверов и данные выбранного сервера для дашборда.
 -- Если запрошенного сервера нет, возвращается самый ранний.
 create or replace function public.get_dashboard(
@@ -375,7 +434,7 @@ returns jsonb
 language sql
 stable
 as $$
-  select to_jsonb(c)
+  select to_jsonb(c) - 'secret_env'
     from public.commands c
    where c.id = p_id;
 $$;
@@ -497,6 +556,7 @@ begin
     'public.agent_sync(uuid, text, jsonb, integer)',
     'public.agent_finish_command(uuid, text, uuid, text, text)',
     'public.enqueue_command(uuid, text, text)',
+    'public.enqueue_add_project(uuid, text, jsonb, text)',
     'public.get_dashboard(uuid, integer)',
     'public.get_command(uuid)',
     'public.get_metrics_history(uuid, integer, integer)',

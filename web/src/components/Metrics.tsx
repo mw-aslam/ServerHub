@@ -16,7 +16,7 @@ import {
 import type { ReactNode } from 'react';
 import {
   batteryHealthLabel,
-  batteryStatusLabel,
+  batteryStateLabel,
   formatGb,
   formatMb,
 } from '@/lib/format';
@@ -37,7 +37,7 @@ const TONE_TAG = {
   normal: { icon: <CircleCheck className="size-3.5 text-good" aria-hidden />, label: 'Норма' },
   warning: { icon: <TriangleAlert className="size-3.5 text-warn" aria-hidden />, label: 'Внимание' },
   critical: { icon: <CircleX className="size-3.5 text-crit" aria-hidden />, label: 'Критично' },
-  unknown: { icon: <CircleHelp className="size-3.5 text-muted" aria-hidden />, label: 'Нет данных' },
+  unknown: { icon: <CircleHelp className="size-3.5 text-muted" aria-hidden />, label: 'Недоступно' },
 };
 
 function toneByLimits(value: number | null, warning: number, critical: number): Tone {
@@ -149,8 +149,9 @@ export function Metrics({
   const cpuSource = {
     loadavg: 'Load average',
     'cpu-times': 'Загрузка ядер',
+    top: 'Команда top',
     pm2: 'По процессам pm2',
-    unavailable: 'Недоступно',
+    unavailable: 'Система не даёт доступа',
   }[cpu.source];
 
   // Без батареи остаётся четыре карточки: раскладываем их ровно два на два.
@@ -204,11 +205,11 @@ export function Metrics({
           ringLabel={`${Math.round(battery.percent)}%`}
         >
           <Row
-            label="Статус"
+            label="Питание"
             value={
               <span className="inline-flex items-center gap-1">
                 {battery.charging && <Zap className="size-3.5 text-good" aria-hidden />}
-                {batteryStatusLabel(battery.status)}
+                {batteryStateLabel(battery)}
               </span>
             }
           />
@@ -217,6 +218,9 @@ export function Metrics({
             value={battery.temperature != null ? `${battery.temperature.toFixed(1)} °C` : '—'}
           />
           <Row label="Состояние" value={batteryHealthLabel(battery.health)} />
+          {battery.currentMa != null && (
+            <Row label="Ток" value={`${Math.abs(battery.currentMa)} мА`} />
+          )}
         </MetricCard>
       )}
 

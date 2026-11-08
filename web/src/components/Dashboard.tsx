@@ -13,6 +13,7 @@ import type {
   HistoryRange,
   ProcessInfo,
 } from '@/lib/types';
+import { AddProjectDialog } from './AddProjectDialog';
 import { AddServerDialog } from './AddServerDialog';
 import { Alerts } from './Alerts';
 import { CapacityCard } from './CapacityCard';
@@ -79,6 +80,8 @@ function DashboardContent() {
   const [confirming, setConfirming] = useState<{ action: CommandAction; project: ProcessInfo } | null>(null);
   const [logsProject, setLogsProject] = useState<string | null>(null);
   const [addingServer, setAddingServer] = useState(false);
+  const [addingProject, setAddingProject] = useState(false);
+  const [projectOutput, setProjectOutput] = useState<{ id: string; project: string } | null>(null);
 
   const dashboard = usePolling<DashboardData>(
     selectedId ? `/api/dashboard?server=${selectedId}` : '/api/dashboard',
@@ -191,7 +194,8 @@ function DashboardContent() {
         hasData={data.hasData}
         ageSec={data.ageSec}
         uptimeSec={data.snapshot?.uptimeSec ?? null}
-        wifi={data.snapshot?.network.wifi ?? null}
+        network={data.snapshot?.network ?? null}
+        device={data.snapshot?.device}
         platform={data.snapshot?.platform ?? null}
       />
 
@@ -233,10 +237,16 @@ function DashboardContent() {
             isBusy={isBusy}
             onAction={onAction}
             onLogs={setLogsProject}
+            onAddProject={() => setAddingProject(true)}
           />
           <div className="grid grid-cols-1 gap-3 sm:gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
             <CapacityCard capacity={data.capacity} />
-            <CommandHistory commands={data.commands} />
+            <CommandHistory
+              commands={data.commands}
+              onOpenOutput={(command) =>
+                setProjectOutput({ id: command.id, project: command.project })
+              }
+            />
           </div>
         </>
       )}
@@ -260,6 +270,30 @@ function DashboardContent() {
           serverId={serverId}
           project={logsProject}
           onClose={() => setLogsProject(null)}
+        />
+      )}
+
+      {projectOutput && serverId && (
+        <LogsDialog
+          key={projectOutput.id}
+          serverId={serverId}
+          project={projectOutput.project}
+          commandId={projectOutput.id}
+          title={`Установка: ${projectOutput.project}`}
+          onClose={() => setProjectOutput(null)}
+        />
+      )}
+
+      {addingProject && serverId && (
+        <AddProjectDialog
+          serverId={serverId}
+          onClose={() => setAddingProject(false)}
+          onCreated={(id, project) => {
+            submittedIds.current.add(id);
+            setAddingProject(false);
+            setProjectOutput({ id, project });
+            refresh();
+          }}
         />
       )}
 

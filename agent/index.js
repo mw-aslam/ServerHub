@@ -3,7 +3,7 @@
 const { loadConfig } = require('./config');
 const { createCollector } = require('./collectors');
 const { createExecutor, isExpired } = require('./commands');
-const { createToolRunner } = require('./process-runner');
+const { createToolRunner, resolveTool } = require('./process-runner');
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_BACKOFF_MS = 30_000;
@@ -14,6 +14,8 @@ const run = createToolRunner(config);
 const collector = createCollector(config, run);
 const executor = createExecutor({
   run,
+  // В Windows pm2 запускает npm через его JS-файл, иначе через команду npm.
+  npmEntry: resolveTool('npm', config).prefix[0] ?? 'npm',
   listProcesses: collector.listProcessesFresh,
   agentName: config.agentName,
 });

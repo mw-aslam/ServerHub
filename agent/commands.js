@@ -1,27 +1,16 @@
 'use strict';
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { createAddProjectRunner } = require('./add-project');
+const { formatStep, trimOutput, MAX_OUTPUT_CHARS } = require('./output');
 
 const MAX_COMMAND_AGE_MS = 60_000;
-const MAX_OUTPUT_CHARS = 64_000;
-const ALLOWED_ACTIONS = new Set(['start', 'stop', 'restart', 'update', 'logs']);
+const ALLOWED_ACTIONS = new Set(['start', 'stop', 'restart', 'update', 'logs', 'add_project']);
 
 function isExpired(ageMs) {
   return !Number.isFinite(ageMs) || ageMs > MAX_COMMAND_AGE_MS;
-}
-
-function trimOutput(text) {
-  if (text.length <= MAX_OUTPUT_CHARS) return text;
-  return `[начало вывода обрезано]\n${text.slice(-MAX_OUTPUT_CHARS)}`;
-}
-
-function formatStep(label, result) {
-  const body = [result.stdout, result.stderr].map((part) => part.trim()).filter(Boolean).join('\n');
-  const failure = result.ok
-    ? ''
-    : `\nОшибка: ${result.timedOut ? 'превышено время выполнения' : `код ${result.code}`}`;
-  return `$ ${label}\n${body}${failure}`.trim();
 }
 
 // pm2 трактует "all" как все проекты, а число как id процесса,
@@ -30,8 +19,23 @@ function hasAmbiguousName(name) {
   return name === 'all' || /^\d+$/.test(name) || name.startsWith('-');
 }
 
-function createExecutor({ run, listProcesses, agentName, pathExists = fs.existsSync }) {
+function createExecutor({
+  run,
+  listProcesses,
+  agentName,
+  pathExists = fs.existsSync,
+  projectsRoot = path.join(os.homedir(), 'projects'),
+  npmEntry = 'npm',
+  projectFiles,
+}) {
   const fail = (output) => ({ status: 'error', output });
+  const addProject = createAddProjectRunner({
+    run,
+    listProcesses,
+    projectsRoot,
+    npmEntry,
+    files: projectFiles,
+  });
 
   async function pm2Action(args) {
     const result = await run('pm2', args, { timeoutMs: 60_000 });
@@ -79,6 +83,7 @@ function createExecutor({ run, listProcesses, agentName, pathExists = fs.existsS
     const { action, project: name } = command;
 
     if (!ALLOWED_ACTIONS.has(action)) return fail('Действие не входит в белый список');
+    if (action === 'add_project') return addProject(command);
     if (typeof name !== 'string' || !name) return fail('Не указано имя проекта');
     if (hasAmbiguousName(name)) return fail(`Имя "${name}" нельзя использовать в команде pm2`);
 

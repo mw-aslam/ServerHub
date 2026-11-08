@@ -10,7 +10,13 @@ const STATUS_ICONS: Record<CommandStatus, React.ReactNode> = {
   expired: <TimerOff className="size-4 text-warn" aria-hidden />,
 };
 
-export function CommandHistory({ commands }: { commands: CommandRow[] }) {
+export function CommandHistory({
+  commands,
+  onOpenOutput,
+}: {
+  commands: CommandRow[];
+  onOpenOutput: (command: CommandRow) => void;
+}) {
   return (
     <section
       aria-labelledby="commands-title"
@@ -35,6 +41,15 @@ export function CommandHistory({ commands }: { commands: CommandRow[] }) {
                   </p>
                   <p className="text-xs text-muted">{formatDateTime(command.created_at)}</p>
                 </div>
+                {command.action === 'add_project' && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenOutput(command)}
+                    className="shrink-0 rounded-lg border border-line-strong px-2.5 py-1 text-xs text-ink-2 transition-colors hover:bg-raised hover:text-ink"
+                  >
+                    Журнал
+                  </button>
+                )}
                 <span className="shrink-0 text-xs text-ink-2">
                   {COMMAND_STATUS_LABELS[command.status]}
                 </span>
@@ -43,6 +58,7 @@ export function CommandHistory({ commands }: { commands: CommandRow[] }) {
 
             const hasDetails =
               command.action !== 'logs' &&
+              command.action !== 'add_project' &&
               Boolean(command.output_preview) &&
               command.status !== 'pending' &&
               command.status !== 'running';

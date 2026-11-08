@@ -52,6 +52,33 @@ export async function createServer(name: string): Promise<CreateServerOutcome> {
   }
 }
 
+export interface NewProject {
+  serverId: string;
+  name: string;
+  repoUrl: string;
+  startCommand: string;
+  env: { key: string; value: string }[];
+}
+
+export async function createProject(project: NewProject): Promise<EnqueueOutcome> {
+  try {
+    const response = await fetch('/api/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(project),
+    });
+    if (response.status === 401) {
+      redirectToLogin();
+      return { ok: false, message: 'Требуется вход' };
+    }
+    const body = await response.json();
+    if (!response.ok) return { ok: false, message: body.error ?? 'Не удалось добавить проект' };
+    return { ok: true, id: body.id };
+  } catch {
+    return { ok: false, message: 'Нет связи с панелью' };
+  }
+}
+
 export async function fetchCommand(id: string): Promise<CommandDetails | null> {
   const response = await fetch(`/api/commands/${id}`, { cache: 'no-store' });
   if (response.status === 401) {

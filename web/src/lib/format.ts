@@ -1,4 +1,4 @@
-import type { CommandAction, CommandStatus, Platform } from './types';
+import type { Battery, CommandStatus, Connection, HistoryAction, Platform } from './types';
 
 const numberFormat = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 });
 
@@ -52,12 +52,13 @@ export function formatDateTime(value: string): string {
   });
 }
 
-export const ACTION_LABELS: Record<CommandAction, string> = {
+export const ACTION_LABELS: Record<HistoryAction, string> = {
   start: 'Старт',
   stop: 'Стоп',
   restart: 'Перезапуск',
   update: 'Обновление',
   logs: 'Логи',
+  add_project: 'Добавление',
 };
 
 export const COMMAND_STATUS_LABELS: Record<CommandStatus, string> = {
@@ -68,13 +69,28 @@ export const COMMAND_STATUS_LABELS: Record<CommandStatus, string> = {
   expired: 'Устарела',
 };
 
-const BATTERY_STATUS: Record<string, string> = {
-  CHARGING: 'Заряжается',
-  DISCHARGING: 'Разряжается',
-  FULL: 'Заряжена полностью',
-  NOT_CHARGING: 'Не заряжается',
-  PLUGGED: 'Подключена к сети',
+const PLUGGED_LABELS: Record<string, string> = {
+  PLUGGED_AC: 'сеть',
+  PLUGGED_USB: 'USB',
+  PLUGGED_WIRELESS: 'беспроводная',
 };
+
+const CONNECTION_REASONS: Record<NonNullable<Connection['reason']>, string> = {
+  no_package: 'Установите пакет: pkg install termux-api',
+  no_app: 'Установите приложение Termux:API и разрешите ему геолокацию',
+  location: 'Имя сети скрыто: дайте Termux:API разрешение на геолокацию и включите её',
+};
+
+export function describeConnection(connection: Connection): { value: string; note: string | null } {
+  const note = connection.reason ? CONNECTION_REASONS[connection.reason] : null;
+  if (connection.type === 'mobile') return { value: 'Мобильная сеть', note };
+  if (connection.type === 'unknown') return { value: 'Тип сети неизвестен', note };
+
+  const parts = [connection.ssid ?? 'Wi-Fi подключён'];
+  if (connection.rssi !== null) parts.push(`${connection.rssi} дБм`);
+  if (connection.linkSpeedMbps !== null) parts.push(`${connection.linkSpeedMbps} Мбит/с`);
+  return { value: parts.join(' · '), note };
+}
 
 export const PLATFORM_LABELS: Record<Platform, string> = {
   termux: 'Android (Termux)',
@@ -92,9 +108,13 @@ const BATTERY_HEALTH: Record<string, string> = {
   UNSPECIFIED_FAILURE: 'сбой',
 };
 
-export function batteryStatusLabel(status: string | null): string {
-  if (!status) return 'Неизвестно';
-  return BATTERY_STATUS[status] ?? 'Неизвестно';
+export function batteryStateLabel(battery: Battery): string {
+  if (!battery.charging) return 'От батареи';
+  const source = battery.plugged ? PLUGGED_LABELS[battery.plugged] : undefined;
+  const suffix = source ? ` (${source})` : '';
+  if (battery.status === 'FULL') return `Заряжена${suffix}`;
+  if (battery.status === 'PLUGGED' || battery.status === 'NOT_CHARGING') return `От сети${suffix}`;
+  return `Заряжается${suffix}`;
 }
 
 export function batteryHealthLabel(health: string | null): string {

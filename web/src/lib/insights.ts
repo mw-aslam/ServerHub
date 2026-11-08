@@ -30,6 +30,18 @@ export function buildAlerts(
   const alerts: Alert[] = [];
   const { battery } = snapshot;
 
+  if (snapshot.termuxApi === 'no_package' || snapshot.termuxApi === 'no_app') {
+    alerts.push({
+      id: 'termux-api',
+      level: 'warning',
+      title: 'Termux:API не работает',
+      detail:
+        snapshot.termuxApi === 'no_package'
+          ? 'Нет данных о батарее и Wi-Fi. Выполните в Termux: pkg install termux-api и установите приложение Termux:API той же сборки, что и Termux.'
+          : 'Нет данных о батарее и Wi-Fi. Установите приложение Termux:API той же сборки, что и Termux (F-Droid или GitHub), и снимите для него ограничения батареи.',
+    });
+  }
+
   if (battery && battery.percent < 20 && !battery.charging) {
     alerts.push({
       id: 'battery-low',

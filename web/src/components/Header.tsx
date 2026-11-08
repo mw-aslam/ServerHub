@@ -3,9 +3,9 @@
 import { ChevronDown, Clock, LogOut, Monitor, Plus, Server, Timer, Wifi, WifiOff } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { logout } from '@/lib/client';
-import { PLATFORM_LABELS, formatAgo, formatUptime } from '@/lib/format';
+import { PLATFORM_LABELS, describeConnection, formatAgo, formatUptime } from '@/lib/format';
 import { OFFLINE_AFTER_SEC } from '@/lib/insights';
-import type { Platform, ServerSummary } from '@/lib/types';
+import type { Platform, ServerSummary, Snapshot } from '@/lib/types';
 
 interface HeaderProps {
   servers: ServerSummary[];
@@ -15,7 +15,8 @@ interface HeaderProps {
   hasData: boolean;
   ageSec: number | null;
   uptimeSec: number | null;
-  wifi: string | null;
+  network: Snapshot['network'] | null;
+  device: Snapshot['device'];
   platform: Platform | null;
 }
 
@@ -59,12 +60,24 @@ export function Header({
   hasData,
   ageSec,
   uptimeSec,
-  wifi,
+  network,
+  device,
   platform,
 }: HeaderProps) {
   const liveAge = useLiveAge(ageSec);
   const online = hasData && liveAge != null && liveAge <= OFFLINE_AFTER_SEC;
-  const showWifi = wifi !== null || platform === 'termux';
+  const connection = network?.connection ? describeConnection(network.connection) : null;
+  // Агент старой версии присылает только имя сети.
+  const networkValue = connection?.value ?? network?.wifi ?? null;
+
+  const systemParts = [
+    device?.model,
+    device?.androidVersion
+      ? `Android ${device.androidVersion}`
+      : platform
+        ? PLATFORM_LABELS[platform]
+        : null,
+  ].filter(Boolean);
 
   return (
     <header className="animate-rise rounded-2xl border border-line bg-surface p-4 sm:p-5">
@@ -139,16 +152,17 @@ export function Header({
         <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-line pt-4">
           <Fact icon={<Clock className="size-4" aria-hidden />} label="Ответ" value={formatAgo(liveAge)} />
           <Fact icon={<Timer className="size-4" aria-hidden />} label="Аптайм" value={formatUptime(uptimeSec)} />
-          {platform && (
+          {systemParts.length > 0 && (
             <Fact
               icon={<Monitor className="size-4" aria-hidden />}
               label="Система"
-              value={PLATFORM_LABELS[platform]}
+              value={systemParts.join(' · ')}
             />
           )}
-          {showWifi && (
-            <Fact icon={<Wifi className="size-4" aria-hidden />} label="Wi-Fi" value={wifi ?? 'недоступно'} />
+          {networkValue && (
+            <Fact icon={<Wifi className="size-4" aria-hidden />} label="Сеть" value={networkValue} />
           )}
+          {connection?.note && <p className="w-full text-sm text-ink-2">{connection.note}</p>}
         </div>
       )}
     </header>

@@ -6,6 +6,7 @@ import { enqueueCommand, fetchCommand } from '@/lib/client';
 
 const POLL_INTERVAL_MS = 2000;
 const POLL_LIMIT_MS = 90_000;
+const LONG_COMMAND_LIMIT_MS = 20 * 60_000;
 
 type LogsState =
   | { phase: 'loading' }
@@ -15,10 +16,15 @@ type LogsState =
 export function LogsDialog({
   serverId,
   project,
+  commandId,
+  title,
   onClose,
 }: {
   serverId: string;
   project: string;
+  // Если задан, окно показывает вывод этой команды и не запрашивает логи заново.
+  commandId?: string;
+  title?: string;
   onClose: () => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -30,31 +36,36 @@ export function LogsDialog({
   const load = useCallback(async () => {
     setState({ phase: 'loading' });
 
-    const queued = await enqueueCommand(serverId, 'logs', project);
-    if (!queued.ok) {
-      if (mounted.current) setState({ phase: 'failed', message: queued.message });
-      return;
+    let id = commandId;
+    if (!id) {
+      const queued = await enqueueCommand(serverId, 'logs', project);
+      if (!queued.ok) {
+        if (mounted.current) setState({ phase: 'failed', message: queued.message });
+        return;
+      }
+      id = queued.id;
     }
 
-    const deadline = Date.now() + POLL_LIMIT_MS;
+    const deadline = Date.now() + (commandId ? LONG_COMMAND_LIMIT_MS : POLL_LIMIT_MS);
     while (mounted.current && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-      const command = await fetchCommand(queued.id).catch(() => null);
+      const command = await fetchCommand(id).catch(() => null);
       if (!mounted.current) return;
-      if (!command) continue;
 
-      if (command.status === 'success') {
-        setState({ phase: 'done', output: command.output || 'Логи пусты.' });
+      if (command?.status === 'success') {
+        setState({ phase: 'done', output: command.output || 'Вывод пуст.' });
         return;
       }
-      if (command.status === 'error' || command.status === 'expired') {
-        setState({ phase: 'failed', message: command.output || 'Не удалось получить логи' });
+      if (command?.status === 'error' || command?.status === 'expired') {
+        const output = command.output || 'Команда не выполнена';
+        // Журнал установки длинный, поэтому показываем его в области с прокруткой.
+        setState(commandId ? { phase: 'done', output } : { phase: 'failed', message: output });
         return;
       }
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
     }
 
     if (mounted.current) setState({ phase: 'failed', message: 'Агент не ответил вовремя' });
-  }, [serverId, project]);
+  }, [serverId, project, commandId]);
 
   useEffect(() => {
     mounted.current = true;
@@ -87,16 +98,18 @@ export function LogsDialog({
     >
       <div className="flex h-full flex-col">
         <header className="flex items-center gap-3 border-b border-line px-4 py-3 sm:px-5">
-          <h2 className="min-w-0 flex-1 truncate font-semibold">Логи: {project}</h2>
-          <button
-            type="button"
-            onClick={() => void load()}
-            disabled={state.phase === 'loading'}
-            aria-label="Обновить логи"
-            className="grid size-9 place-items-center rounded-lg text-ink-2 transition-colors hover:bg-raised disabled:opacity-40"
-          >
-            <RefreshCw className="size-4" aria-hidden />
-          </button>
+          <h2 className="min-w-0 flex-1 truncate font-semibold">{title ?? `Логи: ${project}`}</h2>
+          {!commandId && (
+            <button
+              type="button"
+              onClick={() => void load()}
+              disabled={state.phase === 'loading'}
+              aria-label="Обновить логи"
+              className="grid size-9 place-items-center rounded-lg text-ink-2 transition-colors hover:bg-raised disabled:opacity-40"
+            >
+              <RefreshCw className="size-4" aria-hidden />
+            </button>
+          )}
           <button
             type="button"
             onClick={onClose}
@@ -111,7 +124,9 @@ export function LogsDialog({
           <div className="grid flex-1 place-items-center p-6 text-center text-sm text-ink-2">
             <div>
               <LoaderCircle className="mx-auto mb-3 size-6 animate-spin text-accent" aria-hidden />
-              Ждём ответа от сервера. Обычно это занимает до одного интервала агента.
+              {commandId
+                ? 'Клонирование, установка зависимостей и запуск. На телефоне это может занять несколько минут.'
+                : 'Ждём ответа от сервера. Обычно это занимает до одного интервала агента.'}
             </div>
           </div>
         )}

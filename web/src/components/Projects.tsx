@@ -9,6 +9,7 @@ import {
   LoaderCircle,
   type LucideIcon,
   Play,
+  Plus,
   RotateCw,
   ScrollText,
   Square,
@@ -134,6 +135,7 @@ export function Projects({
   isBusy,
   onAction,
   onLogs,
+  onAddProject,
 }: {
   projects: ProcessInfo[];
   pm2Available: boolean;
@@ -141,13 +143,25 @@ export function Projects({
   isBusy: (action: CommandAction, project: string) => boolean;
   onAction: (action: CommandAction, project: ProcessInfo) => void;
   onLogs: (project: string) => void;
+  onAddProject: () => void;
 }) {
   return (
     <section aria-labelledby="projects-title">
-      <h2 id="projects-title" className="mb-3 text-base font-semibold">
-        Проекты
-        <span className="ml-2 font-normal text-muted">{projects.length}</span>
-      </h2>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <h2 id="projects-title" className="text-base font-semibold">
+          Проекты
+          <span className="ml-2 font-normal text-muted">{projects.length}</span>
+        </h2>
+        <button
+          type="button"
+          onClick={onAddProject}
+          disabled={!online}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-line-strong px-3 py-1.5 text-sm text-ink-2 transition-colors hover:bg-raised hover:text-ink disabled:opacity-40 disabled:hover:bg-transparent"
+        >
+          <Plus className="size-4" aria-hidden />
+          Добавить проект
+        </button>
+      </div>
 
       {projects.length === 0 ? (
         <p className="rounded-2xl border border-line bg-surface p-6 text-center text-sm text-ink-2">

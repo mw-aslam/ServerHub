@@ -145,15 +145,29 @@ function normalizeProcesses(list, agentName) {
   return [...byName.values()];
 }
 
+// Android отдаёт ток в микроамперах, но часть прошивок сразу в миллиамперах.
+function normalizeCurrentMa(raw) {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
+  const milliamps = Math.abs(raw) >= 10_000 ? raw / 1000 : raw;
+  return Math.abs(milliamps) <= 20_000 ? Math.round(milliamps) : null;
+}
+
 function parseBattery(stdout) {
   const data = JSON.parse(stdout);
   if (typeof data.percentage !== 'number') return null;
+  const plugged = typeof data.plugged === 'string' ? data.plugged : null;
+  const isPlugged = plugged !== null && plugged !== 'UNPLUGGED';
   return {
     percent: clampPercent(data.percentage),
-    charging: data.status === 'CHARGING' || data.status === 'FULL',
+    charging:
+      data.status === 'CHARGING' ||
+      data.status === 'FULL' ||
+      (isPlugged && data.status !== 'DISCHARGING'),
     temperature: saneTemperature(data.temperature),
     health: typeof data.health === 'string' ? data.health : null,
     status: typeof data.status === 'string' ? data.status : null,
+    plugged,
+    currentMa: normalizeCurrentMa(data.current),
   };
 }
 
@@ -222,11 +236,60 @@ function parseWindowsBattery(stdout) {
   };
 }
 
+const inRange = (value, min, max) =>
+  typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max ? value : null;
+
 function parseWifi(stdout) {
   const data = JSON.parse(stdout);
-  const ssid = typeof data.ssid === 'string' ? data.ssid.replace(/^"|"$/g, '') : '';
-  if (!ssid || ssid === '<unknown ssid>') return null;
-  return ssid;
+  if (data === null || typeof data !== 'object' || data.API_ERROR) throw new Error('wifi api error');
+
+  const hasIp = typeof data.ip === 'string' && data.ip !== '' && data.ip !== '0.0.0.0';
+  if (data.supplicant_state !== 'COMPLETED' && !hasIp) {
+    return { type: 'mobile', ssid: null, rssi: null, linkSpeedMbps: null, frequencyMhz: null, reason: null };
+  }
+
+  const raw = typeof data.ssid === 'string' ? data.ssid.replace(/^"|"$/g, '') : '';
+  const ssid = raw && raw !== '<unknown ssid>' ? raw.slice(0, 100) : null;
+  return {
+    type: 'wifi',
+    ssid,
+    rssi: inRange(data.rssi, -126, 0),
+    linkSpeedMbps: inRange(data.link_speed_mbps, 1, 100_000),
+    frequencyMhz: inRange(data.frequency_mhz, 1, 100_000),
+    // Без геолокации Android подменяет имя сети на <unknown ssid>.
+    reason: ssid ? null : 'location',
+  };
+}
+
+function termuxFailure(result) {
+  return result.code === 'ENOENT' ? 'no_package' : 'no_app';
+}
+
+// Заголовок top: toybox в Android и procps в Linux пишут его по-разному.
+function parseTop(stdout) {
+  const total = Number(stdout.match(/(\d+(?:\.\d+)?)%cpu\b/i)?.[1]);
+  const idle = Number(stdout.match(/(\d+(?:\.\d+)?)%idle\b/i)?.[1]);
+  if (total > 0 && Number.isFinite(idle)) return clampPercent(((total - idle) / total) * 100);
+
+  const procpsIdle = stdout.match(/Cpu\(s\):.*?(\d+(?:[.,]\d+)?)\s*id\b/i)?.[1];
+  if (procpsIdle !== undefined) return clampPercent(100 - Number(procpsIdle.replace(',', '.')));
+  return null;
+}
+
+async function readDevice(run) {
+  const prop = async (name) => {
+    for (const file of ['getprop', '/system/bin/getprop']) {
+      const result = await run(file, [name], { timeoutMs: 5000 });
+      const value = result.ok ? result.stdout.trim() : '';
+      if (value) return value.slice(0, 100);
+    }
+    return null;
+  };
+  const [model, androidVersion] = await Promise.all([
+    prop('ro.product.model'),
+    prop('ro.build.version.release'),
+  ]);
+  return { model, androidVersion };
 }
 
 // Возвращает результат не чаще раза в ttlMs и не запускает параллельных замеров.
@@ -309,12 +372,15 @@ function createCpuSampler(readCpus = os.cpus) {
 
 function readLoad(platform) {
   if (platform === 'windows') return null;
-  if (platform === 'macos') return parseLoadavg(os.loadavg().join(' '));
   try {
-    return parseLoadavg(fs.readFileSync('/proc/loadavg', 'utf8'));
+    if (platform !== 'macos') {
+      const load = parseLoadavg(fs.readFileSync('/proc/loadavg', 'utf8'));
+      if (load) return load;
+    }
   } catch {
-    return null;
+    // Файл закрыт системой, пробуем следующий источник.
   }
+  return parseLoadavg(os.loadavg().join(' '));
 }
 
 function readUptimeSec() {
@@ -357,11 +423,22 @@ async function readLinuxBattery() {
 const WINDOWS_BATTERY_QUERY =
   'Get-CimInstance Win32_Battery | Select-Object EstimatedChargeRemaining,BatteryStatus | ConvertTo-Json -Compress';
 
-function createBatteryReader(platform, run) {
+function createBatteryReader(platform, run, onTermuxStatus) {
   const readers = {
     termux: async () => {
       const result = await run('termux-battery-status', [], { timeoutMs: 8000 });
-      return result.ok ? parseBattery(result.stdout) : null;
+      if (!result.ok) {
+        onTermuxStatus(termuxFailure(result));
+        return null;
+      }
+      try {
+        const battery = parseBattery(result.stdout);
+        onTermuxStatus(battery ? 'ok' : 'no_app');
+        return battery;
+      } catch {
+        onTermuxStatus('no_app');
+        return null;
+      }
     },
     linux: readLinuxBattery,
     macos: async () => {
@@ -381,6 +458,7 @@ function createCollector(config, run) {
   const { platform } = config;
   const cores = cpuCount();
   const sampleCpu = createCpuSampler();
+  let termuxApi = null;
 
   const getRawProcesses = cached(config.pm2IntervalMs, async () => {
     const result = await run('pm2', ['jlist'], { timeoutMs: 15_000 });
@@ -395,7 +473,11 @@ function createCollector(config, run) {
       : config.batteryIntervalMs;
   const getBattery = cached(
     batteryIntervalMs,
-    keepLastBattery(createBatteryReader(platform, run)),
+    keepLastBattery(
+      createBatteryReader(platform, run, (status) => {
+        termuxApi = status;
+      }),
+    ),
   );
 
   const getDisk = cached(config.diskIntervalMs, async () => {
@@ -406,11 +488,33 @@ function createCollector(config, run) {
     return parsed ?? diskFromStatfs(target);
   });
 
-  // Имя Wi-Fi надёжно доступно только через Termux:API.
-  const getWifi = cached(config.wifiIntervalMs, async () => {
+  // Данные Wi-Fi надёжно доступны только через Termux:API.
+  const getConnection = cached(config.wifiIntervalMs, async () => {
     if (platform !== 'termux') return null;
+    const unknown = (reason) => ({
+      type: 'unknown',
+      ssid: null,
+      rssi: null,
+      linkSpeedMbps: null,
+      frequencyMhz: null,
+      reason,
+    });
     const result = await run('termux-wifi-connectioninfo', [], { timeoutMs: 8000 });
-    return result.ok ? parseWifi(result.stdout) : null;
+    if (!result.ok) return unknown(termuxFailure(result));
+    try {
+      return parseWifi(result.stdout);
+    } catch {
+      return unknown('no_app');
+    }
+  });
+
+  const getDevice = cached(3_600_000, async () =>
+    platform === 'termux' ? readDevice(run) : null,
+  );
+
+  const getTopCpu = cached(config.pm2IntervalMs, async () => {
+    const result = await run('top', ['-b', '-n', '1'], { timeoutMs: 8000 });
+    return result.ok ? parseTop(result.stdout) : null;
   });
 
   async function readRam() {
@@ -437,7 +541,8 @@ function createCollector(config, run) {
     };
   }
 
-  function buildCpu(processes) {
+  // Источники проверяются по очереди: в Android 10 закрыт /proc/stat.
+  async function buildCpu(processes) {
     const noLoad = { load1: null, load5: null, load15: null };
     const load = readLoad(platform);
     if (load) {
@@ -452,6 +557,10 @@ function createCollector(config, run) {
     if (sampled !== null) {
       return { percent: round(sampled), ...noLoad, cores, source: 'cpu-times' };
     }
+    if (platform === 'termux' || platform === 'linux') {
+      const fromTop = await getTopCpu();
+      if (fromTop !== null) return { percent: round(fromTop), ...noLoad, cores, source: 'top' };
+    }
     if (!processes) {
       return { percent: null, ...noLoad, cores, source: 'unavailable' };
     }
@@ -460,23 +569,32 @@ function createCollector(config, run) {
   }
 
   async function collect(backendMs) {
-    const [rawProcesses, battery, disk, wifi, ram, latencyMs] = await Promise.all([
+    const [rawProcesses, battery, disk, connection, device, ram, latencyMs] = await Promise.all([
       getRawProcesses(),
       getBattery(),
       getDisk(),
-      getWifi(),
+      getConnection(),
+      getDevice(),
       readRam().catch(() => null),
       measureLatency().catch(() => null),
     ]);
+    const cpu = await buildCpu(rawProcesses);
     const now = Date.now();
 
     return {
       platform,
-      cpu: buildCpu(rawProcesses),
+      device,
+      termuxApi,
+      cpu,
       ram,
       disk,
       battery,
-      network: { latencyMs, backendMs: backendMs ?? null, wifi },
+      network: {
+        latencyMs,
+        backendMs: backendMs ?? null,
+        wifi: connection?.ssid ?? null,
+        connection,
+      },
       uptimeSec: readUptimeSec(),
       pm2Available: rawProcesses !== null,
       processes: (rawProcesses || []).map((item) => publicProcess(item, now)),
@@ -512,5 +630,7 @@ module.exports = {
   parsePmset,
   parseWindowsBattery,
   parseWifi,
+  parseTop,
+  readDevice,
   cached,
 };
