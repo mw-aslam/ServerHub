@@ -3,7 +3,7 @@
 import { LoaderCircle, Server } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
 
-export function LoginForm() {
+export function LoginForm({ version }: { version: string }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -76,6 +76,8 @@ export function LoginForm() {
           {busy && <LoaderCircle className="size-4 animate-spin" aria-hidden />}
           Войти
         </button>
+
+        <p className="mt-4 text-center text-xs text-muted">Версия {version}</p>
       </form>
     </main>
   );

@@ -147,7 +147,7 @@ export function Projects({
 }) {
   return (
     <section aria-labelledby="projects-title">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+      <div className="mb-3 flex flex-wrap items-center gap-3">
         <h2 id="projects-title" className="text-base font-semibold">
           Проекты
           <span className="ml-2 font-normal text-muted">{projects.length}</span>
@@ -156,7 +156,8 @@ export function Projects({
           type="button"
           onClick={onAddProject}
           disabled={!online}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-line-strong px-3 py-1.5 text-sm text-ink-2 transition-colors hover:bg-raised hover:text-ink disabled:opacity-40 disabled:hover:bg-transparent"
+          title={online ? undefined : 'Сервер оффлайн'}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
         >
           <Plus className="size-4" aria-hidden />
           Добавить проект

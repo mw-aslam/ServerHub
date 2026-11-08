@@ -73,7 +73,7 @@ function saveSelectedServer(id: string) {
   }
 }
 
-function DashboardContent() {
+function DashboardContent({ version }: { version: string }) {
   const toast = useToast();
   const [selectedId, setSelectedId] = useState<string | null>(readSelectedServer);
   const [range, setRange] = useState<HistoryRange>('1h');
@@ -251,6 +251,8 @@ function DashboardContent() {
         </>
       )}
 
+      <p className="text-center text-xs text-muted">Версия {version}</p>
+
       {confirming && confirmText && (
         <ConfirmDialog
           title={confirmText.title}
@@ -311,10 +313,10 @@ function DashboardContent() {
   );
 }
 
-export function Dashboard() {
+export function Dashboard({ version }: { version: string }) {
   return (
     <ToastProvider>
-      <DashboardContent />
+      <DashboardContent version={version} />
     </ToastProvider>
   );
 }
