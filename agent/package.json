@@ -1,0 +1,14 @@
+{
+  "name": "serverhub-agent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Лёгкий агент ServerHub для Termux, Linux, macOS и Windows",
+  "main": "index.js",
+  "engines": {
+    "node": ">=18.15"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test"
+  }
+}

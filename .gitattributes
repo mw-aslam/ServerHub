@@ -1,0 +1,2 @@
+# Скрипты запускаются в Termux и Linux, символы CRLF сломали бы их.
+* text=auto eol=lf

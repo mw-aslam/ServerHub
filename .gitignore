@@ -1,0 +1,19 @@
+node_modules/
+.next/
+.vercel/
+*.tsbuildinfo
+next-env.d.ts
+
+# Секреты
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+secrets*.txt
+.git-credentials
+
+# Логи
+*.log
+.pm2/
